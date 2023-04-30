@@ -8,6 +8,9 @@
 import UIKit
 import CoreML
 import Vision
+import Alamofire
+import SwiftyJSON
+import SDWebImage
 
 class ViewController: UIViewController {
 
@@ -66,7 +69,32 @@ class ViewController: UIViewController {
         return label
     }()
     
-    private let padding = CGFloat(11)
+    private let imageInfo: UIImageView = {
+        let image = UIImageView()
+        image.backgroundColor = .systemBackground
+        image.contentMode = .scaleAspectFit
+        image.clipsToBounds = true
+        image.translatesAutoresizingMaskIntoConstraints = false
+        return image
+    }()
+    
+    private let labelInfo: UILabel = {
+        let label = UILabel()
+        label.textColor = .label
+        label.adjustsFontSizeToFitWidth = true
+        label.textAlignment = .left
+        label.lineBreakMode = .byTruncatingTail
+        label.numberOfLines = 0
+        label.minimumScaleFactor = 0.4
+        label.text = ""
+        label.backgroundColor = .systemBackground
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    private let padding = CGFloat(10)
+    
+    private let wikipediaUrl = "https://en.wikipedia.org/w/api.php"
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -89,17 +117,21 @@ class ViewController: UIViewController {
         
         view.addSubview(imagePreview)
         view.addSubview(labelPreview)
-        view.addSubview(labelResultContainer)
+        view.addSubview(imageInfo)
+        view.addSubview(labelInfo)
         
+        imagePreview.addSubview(labelResultContainer)
         labelResultContainer.addSubview(labelResult)
     }
     
     override func viewDidLayoutSubviews() {
         
         let insets = self.view.safeAreaInsets
+        let imageInfoHeight = CGFloat(120)
+        let labelInfoHeight = CGFloat(200)
         
         imagePreview.topAnchor.constraint(equalTo: view.topAnchor, constant: insets.top).isActive = true
-        imagePreview.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -insets.bottom).isActive = true
+        imagePreview.heightAnchor.constraint(equalTo: view.heightAnchor, constant: -insets.top-insets.bottom-imageInfoHeight-labelInfoHeight).isActive = true
         imagePreview.leftAnchor.constraint(equalTo: view.leftAnchor, constant: insets.left).isActive = true
         imagePreview.rightAnchor.constraint(equalTo: view.rightAnchor, constant: -insets.right).isActive = true
         
@@ -108,9 +140,9 @@ class ViewController: UIViewController {
         labelPreview.leftAnchor.constraint(equalTo: imagePreview.leftAnchor).isActive = true
         labelPreview.rightAnchor.constraint(equalTo: imagePreview.rightAnchor).isActive = true
         
-        labelResultContainer.leftAnchor.constraint(equalTo: view.leftAnchor, constant: insets.left+padding).isActive = true
-        labelResultContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -insets.bottom-padding).isActive = true
-        labelResultContainer.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -(view.bounds.width / 2)).isActive = true
+        labelResultContainer.leftAnchor.constraint(equalTo: imagePreview.leftAnchor, constant: insets.left+padding).isActive = true
+        labelResultContainer.bottomAnchor.constraint(equalTo: imagePreview.bottomAnchor, constant: -padding).isActive = true
+        labelResultContainer.widthAnchor.constraint(equalTo: imagePreview.widthAnchor, constant: -(imagePreview.bounds.width / 2)).isActive = true
         
         labelResult.topAnchor.constraint(equalTo: labelResultContainer.topAnchor, constant: padding).isActive = true
         labelResult.bottomAnchor.constraint(equalTo: labelResultContainer.bottomAnchor, constant: -padding).isActive = true
@@ -118,6 +150,16 @@ class ViewController: UIViewController {
         labelResult.rightAnchor.constraint(equalTo: labelResultContainer.rightAnchor, constant: -padding).isActive = true
         
         labelResultContainer.heightAnchor.constraint(equalTo: labelResult.heightAnchor, constant: padding * 2).isActive = true
+        
+        imageInfo.heightAnchor.constraint(equalToConstant: imageInfoHeight).isActive = true
+        imageInfo.topAnchor.constraint(equalTo: imagePreview.bottomAnchor, constant: padding).isActive = true
+        imageInfo.leftAnchor.constraint(equalTo: view.leftAnchor, constant: insets.left).isActive = true
+        imageInfo.rightAnchor.constraint(equalTo: view.rightAnchor, constant: -insets.right).isActive = true
+        
+        labelInfo.topAnchor.constraint(equalTo: imageInfo.bottomAnchor, constant: padding).isActive = true
+        labelInfo.leftAnchor.constraint(equalTo: view.leftAnchor, constant: insets.left+padding).isActive = true
+        labelInfo.rightAnchor.constraint(equalTo: view.rightAnchor, constant: -insets.right-padding).isActive = true
+        labelInfo.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -insets.bottom).isActive = true
         
         // Hide result label
         labelResultContainer.isHidden = true
@@ -180,6 +222,11 @@ extension ViewController: UIImagePickerControllerDelegate, UINavigationControlle
             // Sort prediction results by its confidence
             let sortedResults = classificationResults.sorted { $0.confidence > $1.confidence}
             
+            // Get wikipedia info
+            if let topResult = sortedResults.first {
+                self?.requestInfo(flowerName: topResult.identifier)
+            }
+            
             var resultString = ""
             
             // Get top 3 prediction results with highest confidence
@@ -202,6 +249,43 @@ extension ViewController: UIImagePickerControllerDelegate, UINavigationControlle
             try handler.perform([request])
         } catch {
             print(error)
+        }
+    }
+    
+    private func requestInfo(flowerName: String) {
+        
+        let parameters: [String : String] = [
+            "format" : "json",
+            "action" : "query",
+            "prop" : "extracts|pageimages",
+            "pithumbsize" : "500",
+            "exintro" : "",
+            "explaintext" : "",
+            "titles" : flowerName,
+            "indexpageids" : "",
+            "redirects" : "1"
+        ]
+        
+        AF.request(wikipediaUrl, method: .get, parameters: parameters).responseData { response in
+            debugPrint(response)
+            do {
+                let data = try response.result.get()
+                debugPrint(data)
+                
+                let jsonData = JSON(data)
+                let page = jsonData["query"]["pageids"][0].stringValue
+                let description = jsonData["query"]["pages"][page]["extract"].stringValue
+                let imageUrl = jsonData["query"]["pages"][page]["thumbnail"]["source"].stringValue
+                print(description)
+                
+                DispatchQueue.main.async {
+                    self.labelInfo.text = description
+                    self.imageInfo.sd_setImage(with: URL(string: imageUrl))
+                }
+                
+            } catch {
+                print("Error get reponse result: \(error)")
+            }
         }
     }
 }
